@@ -17,7 +17,7 @@ export class ChatService {
 
     constructor() {
         this.openai = new OpenAI({
-            apiKey: "openAIkey",
+            apiKey: process.env.OPEN_AI_KEY,
         });
     }
 
