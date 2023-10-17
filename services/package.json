@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "sse-stream": "^0.0.5"
+  }
+}
