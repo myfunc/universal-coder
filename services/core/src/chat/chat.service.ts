@@ -112,8 +112,8 @@ export class ChatService {
             const limit = limitMatch ? Number(limitMatch[1]) : 0;
             const skip = skipMatch ? Number(skipMatch[1]) : 0;
 
-            const lines = this.terminal.getStdOutLines(limit, skip);
-            return ">" + lines.join("\n");
+            const result = this.terminal.getStdOutChars(limit, skip);
+            return ">" + result;
         }
 
         const readErrMatch = message.match(/READERR (.+)/s);
@@ -125,15 +125,15 @@ export class ChatService {
             const limit = limitMatch ? Number(limitMatch[1]) : 0;
             const skip = skipMatch ? Number(skipMatch[1]) : 0;
 
-            const lines = this.terminal.getStdOutLines(limit, skip);
-            return ">" + lines.join("\n");
+            const result = this.terminal.getStdErrChars(limit, skip);
+            return ">" + result;
         }
 
-        const cronMatch = message.match(/CRON (.+)/s);
+        const cronMatch = message.match(/CRON (.+) \$END/s);
         if (cronMatch && cronMatch[1]) {
             const params = cronMatch[1].trim();
 
-            await Wait((params as unknown as number) + 0);
+            await Wait(parseInt(params));
 
             return `$IsInProgress: ${this.terminal.isInProgress()}`;
         }

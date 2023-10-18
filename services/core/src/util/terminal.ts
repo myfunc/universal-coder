@@ -65,7 +65,7 @@ export class Terminal {
 
             setTimeout(() => {
                 resolve("$Running");
-            }, 5000);
+            }, 10000);
 
             this.shell.stdout.on("data", onDataMemory);
             this.shell.stderr.on("data", onDataMemory);
@@ -85,21 +85,45 @@ export class Terminal {
         return this.exitCode;
     }
 
-    getStdOutLines(limit: number, skip: number): string[] {
-        const lines = this.stdoutHistory;
-        const linesToReturn =
-            skip === 0
-                ? lines.slice(-limit)
-                : lines.slice(-limit - skip, -skip);
-        return linesToReturn;
+    getStdOutChars(limit: number, skip: number): string {
+        return this.getCharsFromLines(this.stdoutHistory, limit, skip);
     }
 
-    getStdErrLines(limit: number, skip: number): string[] {
-        const lines = this.stderrHistory;
-        const linesToReturn =
-            skip === 0
-                ? lines.slice(-limit)
-                : lines.slice(-limit - skip, -skip);
-        return linesToReturn;
+    getStdErrChars(limit: number, skip: number): string {
+        return this.getCharsFromLines(this.stderrHistory, limit, skip);
+    }
+
+    private getCharsFromLines(
+        lines: string[],
+        limit: number,
+        skip: number
+    ): string {
+        let charsToReturn = "";
+        let skippedChars = 0;
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const currentLine = lines[i];
+
+            if (skip > 0) {
+                if (currentLine.length <= skip - skippedChars) {
+                    skippedChars += currentLine.length;
+                    continue;
+                } else {
+                    const charsToSkipFromCurrentLine = skip - skippedChars;
+                    const charsToAdd = currentLine.slice(
+                        -charsToSkipFromCurrentLine
+                    );
+                    charsToReturn = charsToAdd + charsToReturn;
+                    skippedChars = skip;
+                }
+            } else {
+                charsToReturn = currentLine + charsToReturn;
+            }
+
+            if (charsToReturn.length >= limit) {
+                return charsToReturn.slice(-limit);
+            }
+        }
+
+        return charsToReturn;
     }
 }

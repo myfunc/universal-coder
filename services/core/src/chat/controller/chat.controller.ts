@@ -33,6 +33,7 @@ export class ChatController {
             (/EXECUTE (.+)\$END/.test(message) ||
                 response.includes("READOUT") ||
                 response.includes("READERR") ||
+                response.includes("SIGINT") ||
                 response.startsWith(">") ||
                 response.startsWith("$")) &&
             !this.isPaused
