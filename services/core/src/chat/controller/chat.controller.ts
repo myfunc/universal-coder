@@ -1,14 +1,16 @@
-import { Controller, Get, Post, Body, Res, HttpStatus } from "@nestjs/common";
+import { Controller, Get, Post, Body, Res } from "@nestjs/common";
 import { Response } from "express";
-import * as sseStream from "sse-stream";
 import { ChatService } from "../chat.service";
+import { SseService } from "./sse.service";
 
 @Controller("chat")
 export class ChatController {
-    private sse: any;
     private isPaused = false;
 
-    constructor(private readonly chatService: ChatService) {}
+    constructor(
+        private readonly chatService: ChatService,
+        private readonly sseService: SseService
+    ) {}
 
     @Post("query")
     async query(
@@ -17,18 +19,15 @@ export class ChatController {
     ): Promise<void> {
         this.isPaused = false;
 
-        let response = await this.chatService.handleChatMessage(message);
+        let response = await this.chatService.handleChatMessage(message, true);
 
-        while (!response.startsWith("ASK") || !this.isPaused) {
-            if (this.sse) {
-                this.sse.write({
-                    event: "message",
-                    data: { message, response },
-                });
-            }
-
-            message = response;
-            response = await this.chatService.handleChatMessage(message);
+        while (
+            (response.includes("EXECUTE") ||
+                response.includes("READ") ||
+                response.startsWith(">")) &&
+            !this.isPaused
+        ) {
+            response = await this.chatService.handleChatMessage(response);
         }
 
         res.send({ response });
@@ -46,12 +45,13 @@ export class ChatController {
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("Access-Control-Allow-Origin", "*");
-        // res.flushHeaders();
+        res.flushHeaders();
 
-        this.sse = sseStream(res.req);
-        this.sse.pipe(res);
+        this.sseService.addClient(res);
+
         res.on("close", () => {
-            this.sse = null;
+            this.sseService.removeClient(res);
+            res.end();
         });
     }
 }
