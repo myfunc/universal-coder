@@ -1,43 +1,27 @@
 import { Injectable } from "@nestjs/common";
-import { exec } from "child_process";
 import OpenAI from "openai";
 import { ChatCompletionMessageParam } from "openai/resources";
 import { SseService } from "./controller/sse.service";
+import { Terminal } from "../util/terminal";
+import { Wait } from "src/util/utils";
+import { systemGpt } from "./consts";
 
 @Injectable()
 export class ChatService {
-    private commandOutputs: string[] = [];
     private chatContext: ChatCompletionMessageParam[] = [
         {
             role: "system",
-            content: `You are a programmer who can:
-                - Can execute any command in command line with command "EXECUTE [input]" and get exit code in the next query.
-                - Can read console output. That any user query starts with ">" sign - is console output.
-                - Can read last lines of console output. READ limit=[count of lines to read] skip=[skip count of lines].
-                - Can read and write or update code/text to any file using command line. For update and write existing command prefer to use "sed" tool in EXECUTE.
-                - Can ask question to human if something not obvious or wrong. Command ASK [question].
-                
-                EXECUTE command run command in ubuntu bash.
-                Use commands for creating and editing files, compiling, and running code.
-                In a single message, you can only execute one command. The EXECUTE and READ commands should only be used in the last line.
-                If you receive a task, you ask questions if something is unclear.
-                
-                When everything is clear, you start the development process that follows this scenario:
-                - Building a description of the solution architecture (selecting databases if needed, constructing an API schema, determining the complexity of the project).
-                - Creating a development plan. If you see problems, you can ask
-                - Creating tasks. And execute one at a time.
-                - Development.
-                - Launch and bug fixing.
-                - Writing unit tests (if applicable) (take this step seriously and cover the most likely scenarios. You don't have to cover everything.
-                - Running unit tests and fixing errors found during testing.`,
+            content: systemGpt,
         },
     ];
     private openai: OpenAI;
+    private terminal: Terminal;
 
     constructor(private readonly sseService: SseService) {
         this.openai = new OpenAI({
             apiKey: process.env.OPEN_AI_KEY,
         });
+        this.terminal = new Terminal();
     }
 
     async queryOpenAI(message: string, isUserMessage = false): Promise<string> {
@@ -47,7 +31,7 @@ export class ChatService {
         });
         try {
             const response = await this.openai.chat.completions.create({
-                model: "gpt-4-0613",
+                model: "gpt-4",
                 messages: [
                     ...this.chatContext,
                     {
@@ -55,8 +39,8 @@ export class ChatService {
                         content: message,
                     },
                 ],
-                temperature: 1,
-                max_tokens: 256,
+                temperature: 0.2,
+                max_tokens: 2048,
                 top_p: 1,
                 frequency_penalty: 0,
                 presence_penalty: 0,
@@ -72,12 +56,19 @@ export class ChatService {
             });
 
             console.log(
-                "Success request: " + JSON.stringify({ message, response })
+                "Success request: " +
+                    JSON.stringify({
+                        message,
+                        response: response.choices[0].message.content.trim(),
+                    })
             );
 
             this.sseService.broadcast({
                 event: "message",
-                data: { message, response },
+                data: {
+                    message,
+                    response: response.choices[0].message.content.trim(),
+                },
             });
 
             return response.choices[0].message.content.trim();
@@ -87,56 +78,71 @@ export class ChatService {
         }
     }
 
-    async executeCommand(
-        command: string
-    ): Promise<{ exitCode: number; output: string }> {
-        return new Promise((resolve, reject) => {
-            exec(command, (error, stdout, stderr) => {
-                const output = stdout + stderr;
-                this.commandOutputs.push(output);
-                if (error) {
-                    resolve({ exitCode: error.code || 1, output });
-                    return;
-                }
-                resolve({ exitCode: 0, output });
-            });
-        });
+    async executeCommand(command: string): Promise<string> {
+        try {
+            const result = await this.terminal.exec(command);
+            return result;
+        } catch (error) {
+            console.error(error);
+            return "Error: " + error.message;
+        }
     }
 
-    async handleChatMessage(
-        message: string,
-        isUserMessage = false
-    ): Promise<string> {
-        const responseFromOpenAi = await this.queryOpenAI(
-            message,
-            isUserMessage
-        );
-
-        const executeMatch = responseFromOpenAi.match(/EXECUTE (.+)/);
+    async handleChatMessage(message: string): Promise<string> {
+        const executeMatch = message.match(/EXECUTE (.+)\$END/s);
         if (executeMatch && executeMatch[1]) {
             const command = executeMatch[1].trim();
             const result = await this.executeCommand(command);
-            return `> Exit code: ${result.exitCode}\n${result.output}`;
+            return `>${result}`;
         }
 
-        const readMatch = responseFromOpenAi.match(/READ (.+)/);
-        if (readMatch && readMatch[1]) {
-            const params = readMatch[1].trim();
+        const sigingMatch = message.match(/SIGINT \$END/s);
+        if (sigingMatch && sigingMatch[1]) {
+            const command = sigingMatch[1].trim();
+            const result = await this.executeCommand(command);
+            return `>Stopped: ${result}`;
+        }
+
+        const readOutMatch = message.match(/READOUT (.+)/s);
+        if (readOutMatch && readOutMatch[1]) {
+            const params = readOutMatch[1].trim();
             const limitMatch = params.match(/limit=(\d+)/);
             const skipMatch = params.match(/skip=(\d+)/);
 
             const limit = limitMatch ? Number(limitMatch[1]) : 0;
             const skip = skipMatch ? Number(skipMatch[1]) : 0;
 
-            const lines = this.commandOutputs.join("\n").split("\n");
-            const linesToReturn = lines.slice(-limit - skip, -skip);
-            return ">" + linesToReturn.join("\n");
+            const lines = this.terminal.getStdOutLines(limit, skip);
+            return ">" + lines.join("\n");
         }
-        const askMatch = responseFromOpenAi.match(/READ (.+)/);
+
+        const readErrMatch = message.match(/READERR (.+)/s);
+        if (readErrMatch && readErrMatch[1]) {
+            const params = readErrMatch[1].trim();
+            const limitMatch = params.match(/limit=(\d+)/);
+            const skipMatch = params.match(/skip=(\d+)/);
+
+            const limit = limitMatch ? Number(limitMatch[1]) : 0;
+            const skip = skipMatch ? Number(skipMatch[1]) : 0;
+
+            const lines = this.terminal.getStdOutLines(limit, skip);
+            return ">" + lines.join("\n");
+        }
+
+        const cronMatch = message.match(/CRON (.+)/s);
+        if (cronMatch && cronMatch[1]) {
+            const params = cronMatch[1].trim();
+
+            await Wait((params as unknown as number) + 0);
+
+            return `$IsInProgress: ${this.terminal.isInProgress()}`;
+        }
+
+        const askMatch = message.match(/ASK (.+)/s);
         if (askMatch && askMatch[1]) {
             return askMatch[1];
         }
 
-        return responseFromOpenAi;
+        return message;
     }
 }

@@ -19,16 +19,34 @@ export class ChatController {
     ): Promise<void> {
         this.isPaused = false;
 
-        let response = await this.chatService.handleChatMessage(message, true);
-
-        while (
-            (response.includes("EXECUTE") ||
-                response.includes("READ") ||
-                response.startsWith(">")) &&
+        let response = "";
+        do {
+            const responseFromOpenAi = await this.chatService.queryOpenAI(
+                message,
+                true
+            );
+            response = await this.chatService.handleChatMessage(
+                responseFromOpenAi
+            );
+            message = response;
+        } while (
+            (/EXECUTE (.+)\$END/.test(message) ||
+                response.includes("READOUT") ||
+                response.includes("READERR") ||
+                response.startsWith(">") ||
+                response.startsWith("$")) &&
             !this.isPaused
-        ) {
-            response = await this.chatService.handleChatMessage(response);
-        }
+        );
+
+        res.send({ response });
+    }
+
+    @Post("debug")
+    async debug(
+        @Body("message") message: string,
+        @Res() res: Response
+    ): Promise<void> {
+        const response = this.chatService.handleChatMessage(message);
 
         res.send({ response });
     }
