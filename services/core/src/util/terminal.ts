@@ -64,6 +64,7 @@ export class Terminal {
             };
 
             setTimeout(() => {
+                this.shell.stdout.on("data", onData);
                 resolve("$Running");
             }, 10000);
 
